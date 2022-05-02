@@ -1,0 +1,5 @@
+/Cargo.lock
+/binding.node
+/node_modules
+/package-lock.json
+/target
