@@ -1,4 +1,6 @@
+use napi::bindgen_prelude::ToNapiValue;
 use napi_derive::napi;
+use static_assertions::const_assert_eq;
 use std::sync::Arc;
 
 #[napi]
@@ -126,6 +128,55 @@ impl GPUDevice {
             self.device.create_render_pipeline(&descriptor),
         ))
     }
+
+    #[napi]
+    pub fn create_buffer(
+        &self,
+        descriptor: GPUBufferDescriptor,
+    ) -> napi::Result<GPUBuffer> {
+        let label = descriptor.label.as_deref();
+        let usage = wgpu::BufferUsages::from_bits(descriptor.usage)
+            .ok_or_else(|| into_napi_error("bad BufferUsage"))?;
+        let descriptor = wgpu::BufferDescriptor {
+            label,
+            usage,
+            size: descriptor.size.into(),
+            mapped_at_creation: descriptor.mapped_at_creation.unwrap_or(false),
+        };
+        Ok(GPUBuffer(self.device.create_buffer(&descriptor)))
+    }
+
+    #[napi]
+    pub fn create_texture(
+        &self,
+        descriptor: GPUTextureDescriptor,
+    ) -> napi::Result<GPUTexture> {
+        let label = descriptor.label.as_deref();
+        let size = wgpu::Extent3d::from(&descriptor.size);
+        let mip_level_count = descriptor.mip_level_count.unwrap_or(1);
+        let sample_count = descriptor.sample_count.unwrap_or(1);
+        let dimension = match descriptor.dimension.as_deref() {
+            Some("1d") => wgpu::TextureDimension::D1,
+            Some("2d") | None => wgpu::TextureDimension::D2,
+            Some("3d") => wgpu::TextureDimension::D3,
+            _ => return Err(into_napi_error("bad texture dimension")),
+        };
+        let format =
+            serde_plain::from_str::<wgpu::TextureFormat>(&descriptor.format)
+                .map_err(into_napi_error)?;
+        let usage = wgpu::TextureUsages::from_bits(descriptor.usage)
+            .ok_or_else(|| into_napi_error("bad texture usage"))?;
+        let descriptor = wgpu::TextureDescriptor {
+            label,
+            size,
+            mip_level_count,
+            sample_count,
+            dimension,
+            format,
+            usage,
+        };
+        Ok(GPUTexture(self.device.create_texture(&descriptor)))
+    }
 }
 
 #[napi(object)]
@@ -207,6 +258,107 @@ impl GPURenderPipeline {
         not_a_constructor()
     }
 }
+
+// TODO napi-rs won't let us alias or refer to wgpu::BindUsages::* here
+#[allow(non_camel_case_types)]
+#[repr(u32)]
+#[napi]
+pub enum GPUBufferUsage {
+    MAP_READ = 1,
+    MAP_WRITE = 2,
+    COPY_SRC = 4,
+    COPY_DST = 8,
+    INDEX = 16,
+    VERTEX = 32,
+    UNIFORM = 64,
+    STORAGE = 128,
+    INDIRECT = 256,
+}
+
+#[rustfmt::skip] const_assert_eq!(GPUBufferUsage::MAP_READ as u32, wgpu::BufferUsages::MAP_READ.bits());
+#[rustfmt::skip] const_assert_eq!(GPUBufferUsage::MAP_WRITE as u32, wgpu::BufferUsages::MAP_WRITE.bits());
+#[rustfmt::skip] const_assert_eq!(GPUBufferUsage::COPY_SRC as u32, wgpu::BufferUsages::COPY_SRC.bits());
+#[rustfmt::skip] const_assert_eq!(GPUBufferUsage::COPY_DST as u32, wgpu::BufferUsages::COPY_DST.bits());
+#[rustfmt::skip] const_assert_eq!(GPUBufferUsage::INDEX as u32, wgpu::BufferUsages::INDEX.bits());
+#[rustfmt::skip] const_assert_eq!(GPUBufferUsage::VERTEX as u32, wgpu::BufferUsages::VERTEX.bits());
+#[rustfmt::skip] const_assert_eq!(GPUBufferUsage::UNIFORM as u32, wgpu::BufferUsages::UNIFORM.bits());
+#[rustfmt::skip] const_assert_eq!(GPUBufferUsage::STORAGE as u32, wgpu::BufferUsages::STORAGE.bits());
+#[rustfmt::skip] const_assert_eq!(GPUBufferUsage::INDIRECT as u32, wgpu::BufferUsages::INDIRECT.bits());
+
+#[napi(object)]
+pub struct GPUBufferDescriptor {
+    pub label: Option<String>,
+    pub size: u32, // TODO should be u64 but napi-rs won't let us
+    pub usage: u32,
+    pub mapped_at_creation: Option<bool>,
+}
+
+#[napi]
+pub struct GPUBuffer(wgpu::Buffer);
+
+#[napi]
+impl GPUBuffer {
+    #[napi(constructor)]
+    pub fn new() -> napi::Result<Self> {
+        not_a_constructor()
+    }
+}
+
+#[napi]
+pub struct GPUTexture(wgpu::Texture);
+
+#[napi]
+impl GPUTexture {
+    #[napi(constructor)]
+    pub fn new() -> napi::Result<Self> {
+        not_a_constructor()
+    }
+}
+
+#[napi(object)]
+pub struct GPUTextureDescriptor {
+    pub label: Option<String>,
+    pub size: GPUExtend3d,
+    pub format: String,
+    pub mip_level_count: Option<u32>,
+    pub sample_count: Option<u32>,
+    pub dimension: Option<String>,
+    pub usage: u32,
+}
+
+#[napi(object)]
+pub struct GPUExtend3d {
+    pub width: u32,
+    pub height: u32,
+    pub depth_or_array_layers: Option<u32>,
+}
+
+impl From<&GPUExtend3d> for wgpu::Extent3d {
+    fn from(that: &GPUExtend3d) -> Self {
+        Self {
+            width: that.width,
+            height: that.height,
+            depth_or_array_layers: that.depth_or_array_layers.unwrap_or(1),
+        }
+    }
+}
+
+#[allow(non_camel_case_types)]
+#[repr(u32)]
+#[napi]
+pub enum GPUTextureUsage {
+    COPY_SRC = 1,
+    COPY_DST = 2,
+    TEXTURE_BINDING = 4,
+    STORAGE_BINDING = 8,
+    RENDER_ATTACHMENT = 16,
+}
+
+#[rustfmt::skip] const_assert_eq!(GPUTextureUsage::COPY_SRC as u32, wgpu::TextureUsages::COPY_SRC.bits());
+#[rustfmt::skip] const_assert_eq!(GPUTextureUsage::COPY_DST as u32, wgpu::TextureUsages::COPY_DST.bits());
+#[rustfmt::skip] const_assert_eq!(GPUTextureUsage::TEXTURE_BINDING as u32, wgpu::TextureUsages::TEXTURE_BINDING.bits());
+#[rustfmt::skip] const_assert_eq!(GPUTextureUsage::STORAGE_BINDING as u32, wgpu::TextureUsages::STORAGE_BINDING.bits());
+#[rustfmt::skip] const_assert_eq!(GPUTextureUsage::RENDER_ATTACHMENT as u32, wgpu::TextureUsages::RENDER_ATTACHMENT.bits());
 
 fn not_a_constructor<T>() -> napi::Result<T> {
     Err(into_napi_error("not a constructor"))
