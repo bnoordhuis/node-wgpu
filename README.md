@@ -10,6 +10,11 @@ Work in progress. Just far along enough to execute the following snippet:
 // Adapted from https://github.com/denoland/webgpu-examples/blob/main/hello-triangle/mod.ts
 import gpu from "gpu"
 
+const {
+    GPUBufferUsage,
+    GPUTextureUsage,
+} = gpu
+
 const adapter = await gpu.requestAdapter()
 const device = await adapter?.requestDevice()
 
