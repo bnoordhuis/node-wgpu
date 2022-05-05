@@ -497,6 +497,22 @@ impl GPURenderPassEncoder {
     }
 
     #[napi]
+    pub fn draw(
+        &mut self,
+        vertex_count: u32,
+        instance_count: Option<u32>,
+        first_vertex: Option<u32>,
+        first_instance: Option<u32>,
+    ) {
+        let first_vertex = first_vertex.unwrap_or(0);
+        let first_instance = first_instance.unwrap_or(0);
+        let instance_count = instance_count.unwrap_or(1);
+        let vertices = first_vertex..vertex_count;
+        let instances = first_instance..instance_count;
+        self.render_pass.draw(vertices, instances);
+    }
+
+    #[napi]
     pub fn end(&mut self) {
         if let Some(rc) = self.rc.take() {
             assert!(rc

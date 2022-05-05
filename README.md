@@ -65,6 +65,8 @@ const renderPass = encoder.beginRenderPass({
     }],
 })
 renderPass.setPipeline(renderPipeline)
+renderPass.draw(3, 1)
+renderPass.end()
 
 function createCapture(device, dimensions) {
     const { padded } = getRowPadding(dimensions.width)
