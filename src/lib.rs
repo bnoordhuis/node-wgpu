@@ -1,4 +1,4 @@
-use napi::bindgen_prelude::ToNapiValue;
+use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use static_assertions::const_assert_eq;
 use std::cell::RefCell;
@@ -102,8 +102,10 @@ impl GPUDevice {
         let mut fragment_targets = vec![];
         let fragment = if let Some(fragment) = &descriptor.fragment {
             for target in &fragment.targets {
-                let target = wgpu::ColorTargetState::try_from(target)
-                    .map_err(into_napi_error)?;
+                let format: wgpu::TextureFormat =
+                    serde_plain::from_str(&target.format)
+                        .map_err(into_napi_error)?;
+                let target = wgpu::ColorTargetState::from(format);
                 fragment_targets.push(target);
             }
             Some(wgpu::FragmentState {
@@ -208,8 +210,19 @@ impl GPUShaderModule {
 
 #[napi(object)]
 pub struct GPUPipelineLayoutDescriptor {
-    pub bind_group_layouts: Vec<()>, // TODO Vec<GPUBindGroupLayout>
+    pub bind_group_layouts: Vec<&'static GPUBindGroupLayout>,
     pub label: Option<String>,
+}
+
+#[napi]
+pub struct GPUBindGroupLayout(wgpu::BindGroupLayout);
+
+#[napi]
+impl GPUBindGroupLayout {
+    #[napi(constructor)]
+    pub fn new() -> napi::Result<Self> {
+        not_a_constructor()
+    }
 }
 
 #[napi]
@@ -247,15 +260,6 @@ pub struct GPUFragmentState {
 #[napi(object)]
 pub struct GPUColorTargetState {
     pub format: String,
-}
-
-impl TryFrom<&GPUColorTargetState> for wgpu::ColorTargetState {
-    type Error = serde_plain::Error;
-
-    fn try_from(target: &GPUColorTargetState) -> Result<Self, Self::Error> {
-        serde_plain::from_str::<wgpu::TextureFormat>(&target.format)
-            .map(wgpu::ColorTargetState::from)
-    }
 }
 
 #[napi]
@@ -407,11 +411,16 @@ impl GPUCommandEncoder {
     #[napi]
     pub fn begin_render_pass(
         &mut self,
-        _descriptor: GPURenderPassDescriptor,
+        descriptor: GPURenderPassDescriptor,
     ) -> napi::Result<GPURenderPassEncoder> {
+        let mut color_attachments = vec![];
+        for c in &descriptor.color_attachments {
+            let c = wgpu::RenderPassColorAttachment::try_from(c)?;
+            color_attachments.push(c);
+        }
         let descriptor = wgpu::RenderPassDescriptor {
-            label: None,
-            color_attachments: &[],
+            label: None, // TODO
+            color_attachments: &color_attachments,
             depth_stencil_attachment: None,
         };
         let rc = Rc::clone(&self.0);
@@ -426,7 +435,7 @@ impl GPUCommandEncoder {
         Ok(GPURenderPassEncoder {
             render_pass,
             encoder,
-            rc,
+            rc: Some(rc),
         })
     }
 }
@@ -442,13 +451,14 @@ impl Drop for GPUCommandEncoder {
 #[napi(object)]
 pub struct GPURenderPassDescriptor {
     pub label: Option<String>,
+    pub color_attachments: Vec<GPURenderPassColorAttachment>,
 }
 
 #[napi]
 pub struct GPURenderPassEncoder {
     render_pass: wgpu::RenderPass<'static>,
     encoder: *mut wgpu::CommandEncoder,
-    rc: Rc<RefCell<Option<&'static mut wgpu::CommandEncoder>>>,
+    rc: Option<Rc<RefCell<Option<&'static mut wgpu::CommandEncoder>>>>,
 }
 
 #[napi]
@@ -479,22 +489,89 @@ impl GPURenderPassEncoder {
     }
 
     #[napi]
-    pub fn end(&self) {}
+    pub fn end(&mut self) {
+        if let Some(rc) = self.rc.take() {
+            assert!(rc
+                .borrow_mut()
+                .replace(unsafe { &mut *self.encoder } as _)
+                .is_none());
+        }
+    }
 }
 
 impl Drop for GPURenderPassEncoder {
     fn drop(&mut self) {
-        assert!(self
-            .rc
-            .borrow_mut()
-            .replace(unsafe { &mut *self.encoder } as _)
-            .is_none());
+        self.end();
     }
 }
 
 #[napi(object)]
 pub struct GPURenderPassColorAttachment {
     pub label: Option<String>,
+    pub view: &'static GPUTextureView,
+    pub load_op: Option<String>, // XXX required?
+    pub store_op: String,
+    pub clear_value: Option<&'static GPUColor>,
+    pub resolve_target: Option<&'static GPUTextureView>,
+}
+
+impl TryFrom<&GPURenderPassColorAttachment>
+    for wgpu::RenderPassColorAttachment<'static>
+{
+    type Error = napi::Error;
+
+    fn try_from(that: &GPURenderPassColorAttachment) -> napi::Result<Self> {
+        let clear_value =
+            that.clear_value.map(wgpu::Color::from).unwrap_or_default();
+        let load = match that.load_op.as_deref().unwrap_or_default() {
+            "" | "load" => wgpu::LoadOp::Load,
+            "clear" => wgpu::LoadOp::Clear(clear_value),
+            _ => return Err(into_napi_error("bad load op")),
+        };
+        let store = match that.store_op.as_str() {
+            "store" => true,
+            "discard" => false,
+            _ => return Err(into_napi_error("bad store op")),
+        };
+        Ok(Self {
+            view: &that.view.0,
+            resolve_target: that.resolve_target.map(|view| &view.0),
+            ops: wgpu::Operations { load, store },
+        })
+    }
+}
+
+#[napi]
+pub struct GPUColor(napi::Either<GPUColorDict, Vec<f64>>);
+
+#[napi(object)]
+pub struct GPUColorDict {
+    pub r: f64,
+    pub g: f64,
+    pub b: f64,
+    pub a: f64,
+}
+
+impl From<&GPUColor> for wgpu::Color {
+    fn from(that: &GPUColor) -> Self {
+        match &that.0 {
+            napi::Either::A(v) => v.into(),
+            napi::Either::B(v) => {
+                let r = v.get(0).copied().unwrap_or(0.0);
+                let g = v.get(1).copied().unwrap_or(0.0);
+                let b = v.get(2).copied().unwrap_or(0.0);
+                let a = v.get(3).copied().unwrap_or(1.0);
+                Self { r, g, b, a }
+            }
+        }
+    }
+}
+
+impl From<&GPUColorDict> for wgpu::Color {
+    fn from(that: &GPUColorDict) -> Self {
+        let GPUColorDict { r, g, b, a } = *that;
+        Self { r, g, b, a }
+    }
 }
 
 fn not_a_constructor<T>() -> napi::Result<T> {
