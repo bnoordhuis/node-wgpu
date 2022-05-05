@@ -53,36 +53,48 @@ const renderPipeline = device.createRenderPipeline({
     },
 })
 
+const { texture, outputBuffer } = createCapture(device, dimensions)
+
+const encoder = device.createCommandEncoder()
+
+const renderPass = encoder.beginRenderPass({
+    colorAttachments: [{
+        view: texture.createView(),
+        storeOp: "store",
+        loadValue: [0, 1, 0, 1],
+    }],
+})
+
 function createCapture(device, dimensions) {
     const { padded } = getRowPadding(dimensions.width)
     const outputBuffer = device.createBuffer({
         label: "Capture",
         size: padded * dimensions.height,
         usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
-      })
-      const texture = device.createTexture({
+    })
+    const texture = device.createTexture({
         label: "Capture",
         size: dimensions,
         format: "rgba8unorm-srgb",
         usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
-      })
-      return { outputBuffer, texture }
+    })
+    return { outputBuffer, texture }
 }
 
 function getRowPadding(width) {
-		// It is a webgpu requirement that BufferCopyView.layout.bytes_per_row % COPY_BYTES_PER_ROW_ALIGNMENT(256) == 0
-		// So we calculate padded_bytes_per_row by rounding unpadded_bytes_per_row
-		// up to the next multiple of COPY_BYTES_PER_ROW_ALIGNMENT.
-		// https://en.wikipedia.org/wiki/Data_structure_alignment#Computing_padding
-		const bytesPerPixel = 4
-		const unpaddedBytesPerRow = width * bytesPerPixel
-		const align = 256
-		const paddedBytesPerRowPadding = (align - unpaddedBytesPerRow % align) % align
-		const paddedBytesPerRow = unpaddedBytesPerRow + paddedBytesPerRowPadding
+    // It is a webgpu requirement that BufferCopyView.layout.bytes_per_row % COPY_BYTES_PER_ROW_ALIGNMENT(256) == 0
+    // So we calculate padded_bytes_per_row by rounding unpadded_bytes_per_row
+    // up to the next multiple of COPY_BYTES_PER_ROW_ALIGNMENT.
+    // https://en.wikipedia.org/wiki/Data_structure_alignment#Computing_padding
+    const bytesPerPixel = 4
+    const unpaddedBytesPerRow = width * bytesPerPixel
+    const align = 256
+    const paddedBytesPerRowPadding = (align - unpaddedBytesPerRow % align) % align
+    const paddedBytesPerRow = unpaddedBytesPerRow + paddedBytesPerRowPadding
 
-		return {
-				unpadded: unpaddedBytesPerRow,
-				padded: paddedBytesPerRow,
-		}
+    return {
+        unpadded: unpaddedBytesPerRow,
+        padded: paddedBytesPerRow,
+    }
 }
 ```

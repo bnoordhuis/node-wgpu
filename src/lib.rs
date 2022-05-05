@@ -1,6 +1,8 @@
 use napi::bindgen_prelude::ToNapiValue;
 use napi_derive::napi;
 use static_assertions::const_assert_eq;
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 
 #[napi]
@@ -177,6 +179,14 @@ impl GPUDevice {
         };
         Ok(GPUTexture(self.device.create_texture(&descriptor)))
     }
+
+    #[napi]
+    pub fn create_command_encoder(&self) -> GPUCommandEncoder {
+        let descriptor = wgpu::CommandEncoderDescriptor { label: None };
+        let encoder = self.device.create_command_encoder(&descriptor);
+        let encoder = Box::leak(Box::new(encoder));
+        GPUCommandEncoder(Rc::new(RefCell::new(Some(encoder))))
+    }
 }
 
 #[napi(object)]
@@ -313,6 +323,28 @@ impl GPUTexture {
     pub fn new() -> napi::Result<Self> {
         not_a_constructor()
     }
+
+    #[napi]
+    pub fn create_view(&self) -> GPUTextureView {
+        let descriptor = wgpu::TextureViewDescriptor::default();
+        GPUTextureView(self.0.create_view(&descriptor))
+    }
+
+    #[napi]
+    pub fn destroy(&self) {
+        self.0.destroy();
+    }
+}
+
+#[napi]
+pub struct GPUTextureView(wgpu::TextureView);
+
+#[napi]
+impl GPUTextureView {
+    #[napi(constructor)]
+    pub fn new() -> napi::Result<Self> {
+        not_a_constructor()
+    }
 }
 
 #[napi(object)]
@@ -359,6 +391,111 @@ pub enum GPUTextureUsage {
 #[rustfmt::skip] const_assert_eq!(GPUTextureUsage::TEXTURE_BINDING as u32, wgpu::TextureUsages::TEXTURE_BINDING.bits());
 #[rustfmt::skip] const_assert_eq!(GPUTextureUsage::STORAGE_BINDING as u32, wgpu::TextureUsages::STORAGE_BINDING.bits());
 #[rustfmt::skip] const_assert_eq!(GPUTextureUsage::RENDER_ATTACHMENT as u32, wgpu::TextureUsages::RENDER_ATTACHMENT.bits());
+
+#[napi]
+pub struct GPUCommandEncoder(
+    Rc<RefCell<Option<&'static mut wgpu::CommandEncoder>>>,
+);
+
+#[napi]
+impl GPUCommandEncoder {
+    #[napi(constructor)]
+    pub fn new() -> napi::Result<Self> {
+        not_a_constructor()
+    }
+
+    #[napi]
+    pub fn begin_render_pass(
+        &mut self,
+        _descriptor: GPURenderPassDescriptor,
+    ) -> napi::Result<GPURenderPassEncoder> {
+        let descriptor = wgpu::RenderPassDescriptor {
+            label: None,
+            color_attachments: &[],
+            depth_stencil_attachment: None,
+        };
+        let rc = Rc::clone(&self.0);
+        let encoder = rc
+            .try_borrow_mut()
+            .map_err(into_napi_error)?
+            .take()
+            .ok_or_else(|| into_napi_error("encoder taken"))?;
+        let encoder = encoder as *mut wgpu::CommandEncoder;
+        let render_pass =
+            unsafe { &mut *encoder }.begin_render_pass(&descriptor);
+        Ok(GPURenderPassEncoder {
+            render_pass,
+            encoder,
+            rc,
+        })
+    }
+}
+
+impl Drop for GPUCommandEncoder {
+    fn drop(&mut self) {
+        let encoder = self.0.borrow_mut().take().expect("encoder taken");
+        let encoder = unsafe { Box::from_raw(encoder) };
+        drop(encoder);
+    }
+}
+
+#[napi(object)]
+pub struct GPURenderPassDescriptor {
+    pub label: Option<String>,
+}
+
+#[napi]
+pub struct GPURenderPassEncoder {
+    render_pass: wgpu::RenderPass<'static>,
+    encoder: *mut wgpu::CommandEncoder,
+    rc: Rc<RefCell<Option<&'static mut wgpu::CommandEncoder>>>,
+}
+
+#[napi]
+impl GPURenderPassEncoder {
+    #[napi(constructor)]
+    pub fn new() -> napi::Result<Self> {
+        not_a_constructor()
+    }
+
+    #[napi]
+    pub fn set_viewport(
+        &mut self,
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+        min_depth: f64,
+        max_depth: f64,
+    ) {
+        self.render_pass.set_viewport(
+            x as f32,
+            y as f32,
+            w as f32,
+            h as f32,
+            min_depth as f32,
+            max_depth as f32,
+        );
+    }
+
+    #[napi]
+    pub fn end(&self) {}
+}
+
+impl Drop for GPURenderPassEncoder {
+    fn drop(&mut self) {
+        assert!(self
+            .rc
+            .borrow_mut()
+            .replace(unsafe { &mut *self.encoder } as _)
+            .is_none());
+    }
+}
+
+#[napi(object)]
+pub struct GPURenderPassColorAttachment {
+    pub label: Option<String>,
+}
 
 fn not_a_constructor<T>() -> napi::Result<T> {
     Err(into_napi_error("not a constructor"))
