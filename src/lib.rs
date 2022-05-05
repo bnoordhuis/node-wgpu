@@ -128,9 +128,8 @@ impl GPUDevice {
             depth_stencil: None,
             multiview: None,
         };
-        Ok(GPURenderPipeline(
-            self.device.create_render_pipeline(&descriptor),
-        ))
+        let pipeline = self.device.create_render_pipeline(&descriptor);
+        Ok(GPURenderPipeline(Rc::new(pipeline)))
     }
 
     #[napi]
@@ -263,7 +262,7 @@ pub struct GPUColorTargetState {
 }
 
 #[napi]
-pub struct GPURenderPipeline(wgpu::RenderPipeline);
+pub struct GPURenderPipeline(Rc<wgpu::RenderPipeline>);
 
 #[napi]
 impl GPURenderPipeline {
@@ -436,6 +435,7 @@ impl GPUCommandEncoder {
             render_pass,
             encoder,
             rc: Some(rc),
+            pipeline: None,
         })
     }
 }
@@ -459,6 +459,7 @@ pub struct GPURenderPassEncoder {
     render_pass: wgpu::RenderPass<'static>,
     encoder: *mut wgpu::CommandEncoder,
     rc: Option<Rc<RefCell<Option<&'static mut wgpu::CommandEncoder>>>>,
+    pipeline: Option<Rc<wgpu::RenderPipeline>>,
 }
 
 #[napi]
@@ -466,6 +467,13 @@ impl GPURenderPassEncoder {
     #[napi(constructor)]
     pub fn new() -> napi::Result<Self> {
         not_a_constructor()
+    }
+
+    #[napi]
+    pub fn set_pipeline(&'static mut self, pipeline: &GPURenderPipeline) {
+        self.pipeline = Some(Rc::clone(&pipeline.0));
+        self.render_pass
+            .set_pipeline(self.pipeline.as_deref().unwrap())
     }
 
     #[napi]
