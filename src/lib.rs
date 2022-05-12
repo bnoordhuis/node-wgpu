@@ -2,6 +2,7 @@ use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use static_assertions::const_assert_eq;
 use std::cell::RefCell;
+use std::num::NonZeroU32;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -438,6 +439,25 @@ impl GPUCommandEncoder {
             pipeline: None,
         })
     }
+
+    #[napi]
+    pub fn copy_texture_to_buffer(
+        &mut self,
+        source: GPUImageCopyTexture,
+        dest: GPUImageCopyBuffer,
+        size: GPUExtend3d,
+    ) -> napi::Result<()> {
+        let source = wgpu::ImageCopyTexture::try_from(&source)?;
+        let dest = wgpu::ImageCopyBuffer::from(&dest);
+        let size = wgpu::Extent3d::from(&size);
+        self.0
+            .try_borrow_mut()
+            .map_err(into_napi_error)?
+            .as_mut()
+            .ok_or_else(|| into_napi_error("encoder taken"))?
+            .copy_texture_to_buffer(source, dest, size);
+        Ok(())
+    }
 }
 
 impl Drop for GPUCommandEncoder {
@@ -445,6 +465,96 @@ impl Drop for GPUCommandEncoder {
         let encoder = self.0.borrow_mut().take().expect("encoder taken");
         let encoder = unsafe { Box::from_raw(encoder) };
         drop(encoder);
+    }
+}
+
+#[napi(object)]
+pub struct GPUImageCopyBuffer {
+    pub buffer: &'static GPUBuffer,
+    pub offset: Option<u32>,
+    pub bytes_per_row: u32,
+    pub rows_per_image: u32,
+}
+
+impl<'a> From<&'a GPUImageCopyBuffer> for wgpu::ImageCopyBuffer<'a> {
+    fn from(that: &GPUImageCopyBuffer) -> Self {
+        let buffer = &that.buffer.0;
+        let offset = that.offset.unwrap_or(0) as u64;
+        let bytes_per_row = NonZeroU32::new(that.bytes_per_row);
+        let rows_per_image = NonZeroU32::new(that.rows_per_image);
+        let layout = wgpu::ImageDataLayout {
+            offset,
+            bytes_per_row,
+            rows_per_image,
+        };
+        Self { buffer, layout }
+    }
+}
+
+#[napi(object)]
+pub struct GPUImageCopyTexture {
+    pub texture: &'static GPUTexture,
+    pub mip_level: Option<u32>,
+    pub origin: Option<&'static GPUOrigin3d>,
+    pub aspect: Option<String>,
+}
+
+impl<'a> TryFrom<&'a GPUImageCopyTexture> for wgpu::ImageCopyTexture<'a> {
+    type Error = napi::Error;
+
+    fn try_from(that: &GPUImageCopyTexture) -> napi::Result<Self> {
+        let mip_level = that.mip_level.unwrap_or(0);
+
+        let origin = that
+            .origin
+            .map(wgpu::Origin3d::from)
+            .unwrap_or(wgpu::Origin3d::ZERO);
+
+        let aspect = match that.aspect.as_deref().unwrap_or_default() {
+            "" | "all" => wgpu::TextureAspect::All,
+            "depth-only" => wgpu::TextureAspect::DepthOnly,
+            "stencil-only" => wgpu::TextureAspect::StencilOnly,
+            _ => return Err(into_napi_error("bad texture aspect")),
+        };
+
+        Ok(Self {
+            texture: &that.texture.0,
+            mip_level,
+            origin,
+            aspect,
+        })
+    }
+}
+
+#[napi]
+pub struct GPUOrigin3d(napi::Either<GPUOrigin3dDict, Vec<u32>>);
+
+#[derive(Default)]
+#[napi(object)]
+pub struct GPUOrigin3dDict {
+    pub x: u32,
+    pub y: u32,
+    pub z: u32,
+}
+
+impl From<&GPUOrigin3d> for wgpu::Origin3d {
+    fn from(that: &GPUOrigin3d) -> Self {
+        match &that.0 {
+            napi::Either::A(v) => v.into(),
+            napi::Either::B(v) => {
+                let x = v.get(0).copied().unwrap_or(0);
+                let y = v.get(1).copied().unwrap_or(0);
+                let z = v.get(2).copied().unwrap_or(0);
+                Self { x, y, z }
+            }
+        }
+    }
+}
+
+impl From<&GPUOrigin3dDict> for wgpu::Origin3d {
+    fn from(that: &GPUOrigin3dDict) -> Self {
+        let GPUOrigin3dDict { x, y, z } = *that;
+        Self { x, y, z }
     }
 }
 

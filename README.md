@@ -15,6 +15,8 @@ const {
     GPUTextureUsage,
 } = gpu
 
+const dimensions = { width: 200, height: 200 }
+
 const adapter = await gpu.requestAdapter()
 const device = await adapter?.requestDevice()
 
