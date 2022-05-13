@@ -354,6 +354,37 @@ impl GPUBuffer {
     pub fn new() -> napi::Result<Self> {
         not_a_constructor()
     }
+
+    #[napi]
+    pub fn destroy(&self) {
+        self.0.destroy();
+    }
+
+    #[napi]
+    pub fn unmap(&self) {
+        self.0.unmap();
+    }
+
+    #[napi]
+    pub async fn map_async(
+        &self,
+        mode: u32,
+        offset: Option<u32>,
+        size: Option<u32>,
+    ) -> napi::Result<()> {
+        let mode = match mode {
+            1 => wgpu::MapMode::Read,
+            2 => wgpu::MapMode::Write,
+            _ => return Err(into_napi_error("bad mode")),
+        };
+        let offset = offset.unwrap_or(0) as u64;
+        let slice = if let Some(size) = size {
+            self.0.slice(offset..offset + size as u64)
+        } else {
+            self.0.slice(offset..)
+        };
+        slice.map_async(mode).await.map_err(into_napi_error)
+    }
 }
 
 #[napi]
