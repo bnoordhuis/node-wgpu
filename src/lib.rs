@@ -192,10 +192,11 @@ impl GPUDevice {
 
     #[napi]
     pub fn create_command_encoder(&self) -> GPUCommandEncoder {
-        let descriptor = wgpu::CommandEncoderDescriptor { label: None };
+        let descriptor = wgpu::CommandEncoderDescriptor {
+            label: None, // TODO
+        };
         let encoder = self.device.create_command_encoder(&descriptor);
-        let encoder = Box::leak(Box::new(encoder));
-        GPUCommandEncoder(Rc::new(RefCell::new(Some(encoder))))
+        GPUCommandEncoder(Rc::new(RefCell::new(Some(Box::new(encoder)))))
     }
 }
 
@@ -434,9 +435,7 @@ pub enum GPUTextureUsage {
 #[rustfmt::skip] const_assert_eq!(GPUTextureUsage::RENDER_ATTACHMENT as u32, wgpu::TextureUsages::RENDER_ATTACHMENT.bits());
 
 #[napi]
-pub struct GPUCommandEncoder(
-    Rc<RefCell<Option<&'static mut wgpu::CommandEncoder>>>,
-);
+pub struct GPUCommandEncoder(Rc<RefCell<Option<Box<wgpu::CommandEncoder>>>>);
 
 #[napi]
 impl GPUCommandEncoder {
@@ -460,21 +459,26 @@ impl GPUCommandEncoder {
             color_attachments: &color_attachments,
             depth_stencil_attachment: None,
         };
-        let rc = Rc::clone(&self.0);
-        let encoder = rc
+
+        let cell = Rc::clone(&self.0);
+        let command_encoder = cell
             .try_borrow_mut()
             .map_err(into_napi_error)?
             .take()
             .ok_or_else(|| into_napi_error("encoder taken"))?;
-        let encoder = encoder as *mut wgpu::CommandEncoder;
+        let command_encoder: *mut wgpu::CommandEncoder =
+            Box::into_raw(command_encoder);
         let render_pass =
-            unsafe { &mut *encoder }.begin_render_pass(&descriptor);
-        Ok(GPURenderPassEncoder {
+            unsafe { &mut *command_encoder }.begin_render_pass(&descriptor);
+
+        let state = GPURenderPassEncoderState {
+            command_encoder,
             render_pass,
-            encoder,
-            rc: Some(rc),
+            cell,
             pipeline: None,
-        })
+        };
+
+        Ok(GPURenderPassEncoder(Some(state)))
     }
 
     #[napi]
@@ -504,18 +508,8 @@ impl GPUCommandEncoder {
             .map_err(into_napi_error)?
             .take()
             .ok_or_else(|| into_napi_error("encoder taken"))?;
-        let encoder = unsafe { Box::from_raw(encoder) };
         let command_buffer = encoder.finish();
         Ok(GPUCommandBuffer(Some(command_buffer)))
-    }
-}
-
-impl Drop for GPUCommandEncoder {
-    fn drop(&mut self) {
-        if let Some(encoder) = self.0.borrow_mut().take() {
-            let encoder = unsafe { Box::from_raw(encoder) };
-            drop(encoder);
-        }
     }
 }
 
@@ -616,11 +610,20 @@ pub struct GPURenderPassDescriptor {
 }
 
 #[napi]
-pub struct GPURenderPassEncoder {
+pub struct GPURenderPassEncoder(Option<GPURenderPassEncoderState>);
+
+pub struct GPURenderPassEncoderState {
+    command_encoder: *mut wgpu::CommandEncoder,
     render_pass: wgpu::RenderPass<'static>,
-    encoder: *mut wgpu::CommandEncoder,
-    rc: Option<Rc<RefCell<Option<&'static mut wgpu::CommandEncoder>>>>,
     pipeline: Option<Rc<wgpu::RenderPipeline>>,
+    cell: Rc<RefCell<Option<Box<wgpu::CommandEncoder>>>>,
+}
+
+impl Drop for GPURenderPassEncoderState {
+    fn drop(&mut self) {
+        let command_encoder = unsafe { Box::from_raw(self.command_encoder) };
+        assert!(self.cell.borrow_mut().replace(command_encoder).is_none());
+    }
 }
 
 #[napi]
@@ -632,9 +635,12 @@ impl GPURenderPassEncoder {
 
     #[napi]
     pub fn set_pipeline(&'static mut self, pipeline: &GPURenderPipeline) {
-        self.pipeline = Some(Rc::clone(&pipeline.0));
-        self.render_pass
-            .set_pipeline(self.pipeline.as_deref().unwrap())
+        if let Some(state) = &mut self.0 {
+            state.pipeline = Some(Rc::clone(&pipeline.0));
+            state
+                .render_pass
+                .set_pipeline(state.pipeline.as_deref().unwrap())
+        }
     }
 
     #[napi]
@@ -647,14 +653,16 @@ impl GPURenderPassEncoder {
         min_depth: f64,
         max_depth: f64,
     ) {
-        self.render_pass.set_viewport(
-            x as f32,
-            y as f32,
-            w as f32,
-            h as f32,
-            min_depth as f32,
-            max_depth as f32,
-        );
+        if let Some(state) = &mut self.0 {
+            state.render_pass.set_viewport(
+                x as f32,
+                y as f32,
+                w as f32,
+                h as f32,
+                min_depth as f32,
+                max_depth as f32,
+            );
+        }
     }
 
     #[napi]
@@ -670,33 +678,14 @@ impl GPURenderPassEncoder {
         let instance_count = instance_count.unwrap_or(1);
         let vertices = first_vertex..vertex_count;
         let instances = first_instance..instance_count;
-        self.render_pass.draw(vertices, instances);
+        if let Some(state) = &mut self.0 {
+            state.render_pass.draw(vertices, instances);
+        }
     }
 
     #[napi]
     pub fn end(&mut self) {
-        if let Some(rc) = self.rc.take() {
-            match Rc::try_unwrap(rc) {
-                Ok(_) => {
-                    // Last reference, we're responsible for cleaning up.
-                    let encoder = unsafe { Box::from_raw(self.encoder) };
-                    drop(encoder);
-                }
-                Err(rc) => {
-                    // GPUCommandEncoder still exists, hand back.
-                    assert!(rc
-                        .borrow_mut()
-                        .replace(unsafe { &mut *self.encoder } as _)
-                        .is_none());
-                }
-            }
-        }
-    }
-}
-
-impl Drop for GPURenderPassEncoder {
-    fn drop(&mut self) {
-        self.end();
+        self.0.take();
     }
 }
 
