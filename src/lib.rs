@@ -45,15 +45,17 @@ impl GPUAdapter {
             .request_device(&descriptor, None)
             .await
             .map_err(into_napi_error)
-            .map(|(device, queue)| GPUDevice { device, queue })
+            .map(|(device, queue)| {
+                let queue = Arc::new(queue);
+                GPUDevice { device, queue }
+            })
     }
 }
 
 #[napi]
 pub struct GPUDevice {
     device: wgpu::Device,
-    #[allow(dead_code)]
-    queue: wgpu::Queue,
+    queue: Arc<wgpu::Queue>,
 }
 
 #[napi]
@@ -61,6 +63,12 @@ impl GPUDevice {
     #[napi(constructor)]
     pub fn new() -> napi::Result<Self> {
         not_a_constructor()
+    }
+
+    #[napi(getter)]
+    pub fn queue(&self) -> GPUQueue {
+        let queue = Arc::clone(&self.queue);
+        GPUQueue(queue)
     }
 
     #[napi]
@@ -188,6 +196,35 @@ impl GPUDevice {
         let encoder = self.device.create_command_encoder(&descriptor);
         let encoder = Box::leak(Box::new(encoder));
         GPUCommandEncoder(Rc::new(RefCell::new(Some(encoder))))
+    }
+}
+
+#[napi]
+pub struct GPUQueue(Arc<wgpu::Queue>);
+
+#[napi]
+impl GPUQueue {
+    #[napi(constructor)]
+    pub fn new() -> napi::Result<Self> {
+        not_a_constructor()
+    }
+
+    #[napi]
+    pub fn submit(&self, command_buffers: Vec<&mut GPUCommandBuffer>) {
+        let command_buffers =
+            command_buffers.into_iter().filter_map(|buf| buf.0.take());
+        self.0.submit(command_buffers)
+    }
+}
+
+#[napi]
+pub struct GPUCommandBuffer(Option<wgpu::CommandBuffer>);
+
+#[napi]
+impl GPUCommandBuffer {
+    #[napi(constructor)]
+    pub fn new() -> napi::Result<Self> {
+        not_a_constructor()
     }
 }
 
@@ -458,13 +495,27 @@ impl GPUCommandEncoder {
             .copy_texture_to_buffer(source, dest, size);
         Ok(())
     }
+
+    #[napi]
+    pub fn finish(&mut self) -> napi::Result<GPUCommandBuffer> {
+        let encoder = self
+            .0
+            .try_borrow_mut()
+            .map_err(into_napi_error)?
+            .take()
+            .ok_or_else(|| into_napi_error("encoder taken"))?;
+        let encoder = unsafe { Box::from_raw(encoder) };
+        let command_buffer = encoder.finish();
+        Ok(GPUCommandBuffer(Some(command_buffer)))
+    }
 }
 
 impl Drop for GPUCommandEncoder {
     fn drop(&mut self) {
-        let encoder = self.0.borrow_mut().take().expect("encoder taken");
-        let encoder = unsafe { Box::from_raw(encoder) };
-        drop(encoder);
+        if let Some(encoder) = self.0.borrow_mut().take() {
+            let encoder = unsafe { Box::from_raw(encoder) };
+            drop(encoder);
+        }
     }
 }
 
@@ -625,10 +676,20 @@ impl GPURenderPassEncoder {
     #[napi]
     pub fn end(&mut self) {
         if let Some(rc) = self.rc.take() {
-            assert!(rc
-                .borrow_mut()
-                .replace(unsafe { &mut *self.encoder } as _)
-                .is_none());
+            match Rc::try_unwrap(rc) {
+                Ok(_) => {
+                    // Last reference, we're responsible for cleaning up.
+                    let encoder = unsafe { Box::from_raw(self.encoder) };
+                    drop(encoder);
+                }
+                Err(rc) => {
+                    // GPUCommandEncoder still exists, hand back.
+                    assert!(rc
+                        .borrow_mut()
+                        .replace(unsafe { &mut *self.encoder } as _)
+                        .is_none());
+                }
+            }
         }
     }
 }

@@ -70,6 +70,10 @@ renderPass.setPipeline(renderPipeline)
 renderPass.draw(3, 1)
 renderPass.end()
 
+copyToBuffer(encoder, texture, outputBuffer, dimensions)
+
+device.queue.submit([encoder.finish()])
+
 function createCapture(device, dimensions) {
     const { padded } = getRowPadding(dimensions.width)
     const outputBuffer = device.createBuffer({
@@ -101,5 +105,14 @@ function getRowPadding(width) {
         unpadded: unpaddedBytesPerRow,
         padded: paddedBytesPerRow,
     }
+}
+
+function copyToBuffer(encoder, texture, buffer, dimensions) {
+    const { padded } = getRowPadding(dimensions.width)
+    encoder.copyTextureToBuffer(
+        { texture },
+        { buffer, bytesPerRow: padded, rowsPerImage: 0 },
+        dimensions,
+    )
 }
 ```
