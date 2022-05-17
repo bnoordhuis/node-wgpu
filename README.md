@@ -116,3 +116,14 @@ function copyToBuffer(encoder, texture, buffer, dimensions) {
     )
 }
 ```
+
+notes
+=====
+
+To run the WebGPU conformance test suite:
+
+    $ git clone https://github.com/gpuweb/cts
+    $ cd cts
+    $ npm install
+    $ npm run standalone
+    $ ./tools/run_node --gpu-provider /path/to/node-wgpu/cts.js webgpu:*

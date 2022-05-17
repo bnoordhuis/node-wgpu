@@ -18,7 +18,7 @@ pub async fn request_adapter() -> Option<GPUAdapter> {
         .map(GPUAdapter)
 }
 
-#[napi]
+#[napi(js_name = "GPUAdapter")]
 pub struct GPUAdapter(Arc<wgpu::Adapter>);
 
 #[napi]
@@ -52,7 +52,7 @@ impl GPUAdapter {
     }
 }
 
-#[napi]
+#[napi(js_name = "GPUDevice")]
 pub struct GPUDevice {
     device: wgpu::Device,
     queue: Arc<wgpu::Queue>,
@@ -200,7 +200,7 @@ impl GPUDevice {
     }
 }
 
-#[napi]
+#[napi(js_name = "GPUQueue")]
 pub struct GPUQueue(Arc<wgpu::Queue>);
 
 #[napi]
@@ -218,7 +218,7 @@ impl GPUQueue {
     }
 }
 
-#[napi]
+#[napi(js_name = "GPUCommandBuffer")]
 pub struct GPUCommandBuffer(Option<wgpu::CommandBuffer>);
 
 #[napi]
@@ -235,7 +235,7 @@ pub struct GPUShaderModuleDescriptor {
     pub label: Option<String>,
 }
 
-#[napi]
+#[napi(js_name = "GPUShaderModule")]
 pub struct GPUShaderModule(wgpu::ShaderModule);
 
 #[napi]
@@ -252,7 +252,7 @@ pub struct GPUPipelineLayoutDescriptor {
     pub label: Option<String>,
 }
 
-#[napi]
+#[napi(js_name = "GPUBindGroupLayout")]
 pub struct GPUBindGroupLayout(wgpu::BindGroupLayout);
 
 #[napi]
@@ -263,7 +263,7 @@ impl GPUBindGroupLayout {
     }
 }
 
-#[napi]
+#[napi(js_name = "GPUPipelineLayout")]
 pub struct GPUPipelineLayout(wgpu::PipelineLayout);
 
 #[napi]
@@ -300,7 +300,7 @@ pub struct GPUColorTargetState {
     pub format: String,
 }
 
-#[napi]
+#[napi(js_name = "GPURenderPipeline")]
 pub struct GPURenderPipeline(Rc<wgpu::RenderPipeline>);
 
 #[napi]
@@ -314,7 +314,7 @@ impl GPURenderPipeline {
 // TODO napi-rs won't let us alias or refer to wgpu::BindUsages::* here
 #[allow(non_camel_case_types)]
 #[repr(u32)]
-#[napi]
+#[napi(js_name = "GPUBufferUsage")]
 pub enum GPUBufferUsage {
     MAP_READ = 1,
     MAP_WRITE = 2,
@@ -345,7 +345,7 @@ pub struct GPUBufferDescriptor {
     pub mapped_at_creation: Option<bool>,
 }
 
-#[napi]
+#[napi(js_name = "GPUBuffer")]
 pub struct GPUBuffer(wgpu::Buffer);
 
 #[napi]
@@ -387,7 +387,7 @@ impl GPUBuffer {
     }
 }
 
-#[napi]
+#[napi(js_name = "GPUTexture")]
 pub struct GPUTexture(wgpu::Texture);
 
 #[napi]
@@ -409,7 +409,7 @@ impl GPUTexture {
     }
 }
 
-#[napi]
+#[napi(js_name = "GPUTextureView")]
 pub struct GPUTextureView(wgpu::TextureView);
 
 #[napi]
@@ -465,7 +465,7 @@ pub enum GPUTextureUsage {
 #[rustfmt::skip] const_assert_eq!(GPUTextureUsage::STORAGE_BINDING as u32, wgpu::TextureUsages::STORAGE_BINDING.bits());
 #[rustfmt::skip] const_assert_eq!(GPUTextureUsage::RENDER_ATTACHMENT as u32, wgpu::TextureUsages::RENDER_ATTACHMENT.bits());
 
-#[napi]
+#[napi(js_name = "GPUCommandEncoder")]
 pub struct GPUCommandEncoder(Rc<RefCell<Option<Box<wgpu::CommandEncoder>>>>);
 
 #[napi]
@@ -640,7 +640,7 @@ pub struct GPURenderPassDescriptor {
     pub color_attachments: Vec<GPURenderPassColorAttachment>,
 }
 
-#[napi]
+#[napi(js_name = "GPURenderPassEncoder")]
 pub struct GPURenderPassEncoder(Option<GPURenderPassEncoderState>);
 
 pub struct GPURenderPassEncoderState {
